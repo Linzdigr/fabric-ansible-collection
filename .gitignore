@@ -162,5 +162,8 @@ tests/output
 # intellij
 .idea
 
-# Runs artifacts
+# Runs artifacts — rewritten in place by the test runners (connection
+# details and generated org names); never commit a run's output.
 tutorial/ordering-org-vars.yml
+tutorial/org1-vars.yml
+tutorial/org2-vars.yml

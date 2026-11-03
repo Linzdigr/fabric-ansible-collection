@@ -2,9 +2,14 @@
 set -euo pipefail
 VERSION=$(yq -r .version galaxy.yml)
 cd tutorial
-# shasum is standard on macOS, sha1sum on Linux: use whichever exists.
-if command -v shasum >/dev/null 2>&1; then _SHA1=shasum; else _SHA1=sha1sum; fi
-TEST_RUN_ID=$(dd if=/dev/urandom bs=4096 count=1 2>/dev/null | ${_SHA1} | awk '{print $1}')
+
+# Seed the per-org vars files from their templates. The real files are
+# gitignored: the runner rewrites them in place with live connection
+# details, which must never be committed.
+for VARS in ordering-org-vars org1-vars org2-vars; do
+    [ -f "${VARS}.yml" ] || cp "${VARS}.yml.example" "${VARS}.yml"
+done
+TEST_RUN_ID=$(dd if=/dev/urandom bs=4096 count=1 2>/dev/null | shasum | awk '{print $1}')
 SHORT_TEST_RUN_ID=$(echo "${TEST_RUN_ID}" | awk '{print substr($1,1,8)}')
 yq -yi ".ordering_org_name=\"Ordering Org ${SHORT_TEST_RUN_ID}\"" common-vars.yml
 yq -yi ".ordering_service_name=\"Ordering Service ${SHORT_TEST_RUN_ID}\"" common-vars.yml

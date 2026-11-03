@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd ~/.ansible/collections/ansible_collections/ibm/blockchain_platform
-# shasum is standard on macOS, sha1sum on Linux: use whichever exists.
-if command -v shasum >/dev/null 2>&1; then _SHA1=shasum; else _SHA1=sha1sum; fi
-TEST_RUN_ID=$(dd if=/dev/urandom bs=4096 count=1 2>/dev/null | ${_SHA1} | awk '{print $1}')
+TEST_RUN_ID=$(dd if=/dev/urandom bs=4096 count=1 2>/dev/null | shasum | awk '{print $1}')
 SHORT_TEST_RUN_ID=$(echo "${TEST_RUN_ID}" | awk '{print substr($1,1,8)}')
 yq -yi ".api_endpoint=\"${API_ENDPOINT}\"" tests/integration/integration_config.yml
 yq -yi ".api_authtype=\"${API_AUTHTYPE}\"" tests/integration/integration_config.yml

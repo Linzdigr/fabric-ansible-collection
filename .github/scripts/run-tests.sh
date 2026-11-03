@@ -13,21 +13,11 @@
 #   KEEP_NETWORK=true       do not destroy the network at the end
 set -euo pipefail
 
+# For local development: source connection details written by deploy-console.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scenario-vars.sh
 source "${SCRIPT_DIR}/scenario-vars.sh"
-
-# For local development: virtualenv, Fabric CLI on PATH, FABRIC_CFG_PATH,
-# KUBECONFIG and the Ansible interpreter. Every piece is guarded inside the
-# script, so in CI — where there is no .venv and the Fabric binaries come from
-# the setup action — this is a no-op beyond a warning on stderr.
-if [[ -f "${SCRIPT_DIR}/lde-env.sh" ]]; then
-    # shellcheck source=/dev/null
-    source "${SCRIPT_DIR}/lde-env.sh"
-fi
-
-# Connection details written by deploy-console.sh
 if [[ -f "${REPO_ROOT}/_cfg/console-env.sh" ]]; then
     # shellcheck source=/dev/null
     source "${REPO_ROOT}/_cfg/console-env.sh"
@@ -48,6 +38,13 @@ esac
 KEEP_NETWORK="$(scenario_bool KEEP_NETWORK "${KEEP_NETWORK:-false}")"
 
 cd "${REPO_ROOT}/tutorial"
+
+# Seed the per-org vars files from their templates. The real files are
+# gitignored: the runner rewrites them in place with live connection
+# details, which must never be committed.
+for VARS in ordering-org-vars org1-vars org2-vars; do
+    [ -f "${VARS}.yml" ] || cp "${VARS}.yml.example" "${VARS}.yml"
+done
 
 # Scenario variables, read by every playbook (console and organizations)
 patch_scenario_vars common-vars.yml

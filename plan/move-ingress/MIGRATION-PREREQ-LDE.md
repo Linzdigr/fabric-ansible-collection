@@ -25,8 +25,8 @@ Ensure the following tools and CLI utilities are installed and available in `$PA
 5. **yq**: must be **python-yq** (`pip install yq`, installed by
    `requirements.txt` inside the venv). The Go `yq` from Homebrew or apt is a
    _different_ tool and does **not** support the `yq -yi` in-place YAML writes
-   the test scripts rely on. `lde_preflight` (section 4.1) checks which one is
-   on `PATH`.
+   the test scripts rely on. Check with `yq --help | grep -- --yaml-output`:
+   no output means the wrong `yq` is first on `PATH`.
 6. **Ansible**: installed inside the virtualenv by section 2, not system-wide.
    A system Ansible on `PATH` shadows the venv one and will not find the
    `kubernetes` SDK.
@@ -104,23 +104,29 @@ curl -sSL "https://github.com/hyperledger/fabric/releases/download/v${FABRIC_VER
 
 This unpacks `bin/` and `config/` into the repository root; both are gitignored.
 
-### 4.1 Load the LDE shell environment
+### 4.1 Shell environment
 
-Rather than exporting variables by hand before each step, **source** the helper
-script. It is idempotent, works under bash and zsh on macOS and Linux, and sets
-up the virtualenv, `PATH`, `FABRIC_CFG_PATH`, `KUBECONFIG` and
-`ANSIBLE_PYTHON_INTERPRETER` in one go:
+Export these from the repository root, in the shell you will use for every
+following section. Re-export them in any new terminal — nothing here persists.
 
 ```bash
-source .github/scripts/lde-env.sh
-lde_preflight
+# 1. The virtualenv from section 2 — a system-wide Ansible on PATH shadows it
+#    and will not find the kubernetes SDK.
+source .venv/bin/activate
+
+# 2. The Fabric CLI binaries unpacked in section 4.
+export PATH="$PWD/bin:$PATH"
+
+# 3. core.yaml, which the peer CLI reads.
+export FABRIC_CFG_PATH="$PWD/config"
+
+# 4. The interpreter Ansible must use on localhost.
+export ANSIBLE_PYTHON_INTERPRETER="$VIRTUAL_ENV/bin/python"
 ```
 
-`lde_preflight` prints one line per dependency and returns non-zero if any is
-missing. Re-run it after each of the following sections; everything should read
-`ok` before section 7.
+`KUBECONFIG` comes later, in section 5, once the Kind cluster has written it.
 
-Two of the variables it sets are easy to miss when doing this manually:
+The last two are the ones most often missed:
 
 | Variable                     | Why it is needed                                                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -133,6 +139,34 @@ Verify the binaries resolve to the repository copy:
 peer version
 command -v peer    # -> <repo>/bin/peer
 ```
+
+### 4.2 (Optional) Shortcut and environment check
+
+`.github/scripts/lde-env.sh` is a convenience for developers who set their
+environment up repeatedly. It is **not** part of the test or CI path: no script
+sources it, and nothing in this guide depends on it. Sourcing it applies exactly
+the exports of section 4.1, plus `KUBECONFIG` once section 5 has run.
+
+```bash
+source .github/scripts/lde-env.sh   # same effect as section 4.1
+lde_preflight                       # audit the environment
+```
+
+`lde_preflight` prints one line per dependency and returns non-zero if any is
+missing. It is most useful as a diagnostic when a step fails: it reports which
+`ansible-playbook`, `peer` and `yq` are actually on `PATH`, which `yq` flavour
+is installed, whether the cluster answers, and which process holds host ports
+80 and 443.
+
+```
+ok      ansible-playbook  <repo>/.venv/bin/ansible-playbook
+ok      peer              <repo>/bin/peer
+ok      yq flavour        python-yq (supports -yi)
+ok      cluster           kind-kind
+check   port 443          held by ssh (pid 45996)
+```
+
+If you prefer the explicit exports of section 4.1, ignore this section entirely.
 
 ---
 
@@ -179,9 +213,12 @@ must be deployed into the cluster. The helper script does this and writes connec
 details to `_cfg/console-env.sh`:
 
 ```bash
-source .github/scripts/lde-env.sh    # sets KUBECONFIG and the rest
+export KUBECONFIG="$PWD/_cfg/k8s_context.yaml"
 .github/scripts/deploy-console.sh
 ```
+
+The exports of section 4.1 must still be active in this shell — `deploy-console.sh`
+runs Ansible modules that need the `kubernetes` SDK and the Fabric binaries.
 
 The script prints the console `API_ENDPOINT` it derived and waits for the console
 deployment to become ready (`wait_timeout=600 s`).
@@ -199,11 +236,24 @@ export KUBECONFIG="$PWD/_cfg/k8s_context.yaml"
 
 ## 7. Run the Tests
 
+The per-org vars files are **gitignored**: the runners rewrite them in place with
+live connection details, which must never be committed. Only the templates are
+tracked. The runners create the real files from their template on first use, so
+nothing is required here — but if you run a tutorial playbook by hand on a fresh
+clone, seed them yourself first:
+
+```bash
+cd tutorial
+for VARS in ordering-org-vars org1-vars org2-vars; do
+    [ -f "${VARS}.yml" ] || cp "${VARS}.yml.example" "${VARS}.yml"
+done
+cd ..
+```
+
 With the console deployed, run the full FV test suite:
 
 ```bash
-source .github/scripts/lde-env.sh
-lde_preflight || echo "fix the above before continuing"
+export KUBECONFIG="$PWD/_cfg/k8s_context.yaml"
 .github/scripts/run-tests.sh
 ```
 
@@ -241,7 +291,7 @@ export USE_DOCKER="false"
   ss -ltnp  '( sport = :443 )'        # Linux fallback
   ```
 
-  `lde_preflight` reports this as a `check` line. Common holders:
+  Common holders:
 
   | Holder                                                                                                                                                                                       | How to free the port                                                                                                                                       |
   | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -250,12 +300,13 @@ export USE_DOCKER="false"
   | A host nginx (Linux)                                                                                                                                                                         | `sudo systemctl stop nginx`                                                                                                                                |
 
 - **`Failed to import the required Python library (kubernetes)`** — Ansible is
-  using the wrong interpreter. Source `lde-env.sh` (section 4.1), which pins
+  using the wrong interpreter. Re-apply section 4.1, in particular
   `ANSIBLE_PYTHON_INTERPRETER`. Confirm with
-  `ansible localhost -m debug -a var=ansible_playbook_python`.
+  `ansible localhost -m debug -a var=ansible_playbook_python`, which must print
+  the `.venv` path.
 
 - **`Failed to execute the required binary (peer)`** — `bin/` is not on `PATH`.
-  Source `lde-env.sh`, then check `command -v peer`.
+  Re-apply section 4.1, then check `command -v peer`.
 
 - **`yq: unknown shorthand flag: 'y'`** — the Go `yq` is on `PATH` ahead of
   python-yq. Activate the virtualenv, or `pip install yq`.
@@ -280,7 +331,7 @@ Work through each item in order before declaring the LDE ready.
 - [ ] Console health endpoint responds with HTTP 200 and a JSON payload:
 
   ```bash
-  source .github/scripts/lde-env.sh
+  source _cfg/console-env.sh
   curl -sk -u "${API_KEY}:${API_SECRET}" "${API_ENDPOINT}/ak/api/v3/health" | jq 'keys'
   # Expected: ["OPTOOLS","OS"]
   ```
